@@ -1,0 +1,55 @@
+name: Charlotte v0.7.9-B APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-d.yml"
+      - "CharlotteAgent-v0.7.9-B-project.zip"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Unpack project
+        run: unzip -q CharlotteAgent-v0.7.9-B-project.zip
+
+      - name: Install Android tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Build APK
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Validate APK
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK"
+          cp "$APK" CharlotteAgent-v0.7.9-B-debug.apk
+          sha256sum CharlotteAgent-v0.7.9-B-debug.apk > CharlotteAgent-SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CharlotteAgent-v0.7.9-B
+          path: |
+            CharlotteAgent-v0.7.9-B-debug.apk
+            CharlotteAgent-SHA256.txt
+          if-no-files-found: error
