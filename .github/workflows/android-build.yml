@@ -1,0 +1,458 @@
+name: Charlotte Android Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/android-build.yml"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          adb version
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Create Charlotte Android project
+        run: |
+          mkdir -p app/src/main/java/com/charlotte/agent
+          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+
+          rootProject.name = "CharlotteAgent"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.7.3" apply false
+          }
+          EOF
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+          }
+
+          android {
+              namespace = "com.charlotte.agent"
+              compileSdk = 35
+
+              defaultConfig {
+                  applicationId = "com.charlotte.agent"
+                  minSdk = 26
+                  targetSdk = 35
+                  versionCode = 1
+                  versionName = "0.7.9-A"
+              }
+          }
+          EOF
+
+          cat > app/src/main/res/values/strings.xml <<'EOF'
+          <resources>
+              <string name="app_name">夏洛特代理</string>
+              <string name="accessibility_description">讓夏洛特讀取目前畫面介面並執行使用者允許的操作</string>
+          </resources>
+          EOF
+
+          cat > app/src/main/res/xml/accessibility_service_config.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <accessibility-service
+              xmlns:android="http://schemas.android.com/apk/res/android"
+              android:accessibilityEventTypes="typeAllMask"
+              android:accessibilityFeedbackType="feedbackGeneric"
+              android:accessibilityFlags="flagReportViewIds|flagRetrieveInteractiveWindows"
+              android:canRetrieveWindowContent="true"
+              android:notificationTimeout="50"
+              android:description="@string/accessibility_description" />
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+              <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"/>
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+
+              <application
+                  android:allowBackup="true"
+                  android:label="夏洛特代理"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+
+                  <service
+                      android:name=".WatchService"
+                      android:exported="false"
+                      android:foregroundServiceType="mediaProjection"/>
+
+                  <service
+                      android:name=".AgentAccessibilityService"
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+                      android:exported="false">
+                      <intent-filter>
+                          <action android:name="android.accessibilityservice.AccessibilityService"/>
+                      </intent-filter>
+
+                      <meta-data
+                          android:name="android.accessibilityservice"
+                          android:resource="@xml/accessibility_service_config"/>
+                  </service>
+
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/java/com/charlotte/agent/MainActivity.java <<'EOF'
+          package com.charlotte.agent;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.ViewGroup;
+          import android.widget.Button;
+          import android.widget.LinearLayout;
+          import android.widget.TextView;
+
+          public class MainActivity extends Activity {
+
+              private static final int CAPTURE_REQUEST = 5001;
+              private MediaProjectionManager projectionManager;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  projectionManager =
+                      (MediaProjectionManager) getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setGravity(Gravity.CENTER);
+                  root.setPadding(48, 48, 48, 48);
+
+                  TextView title = new TextView(this);
+                  title.setText("夏洛特 AI 代理遊戲器\nv0.7.9-A");
+                  title.setTextSize(26);
+                  title.setGravity(Gravity.CENTER);
+
+                  Button watch = new Button(this);
+                  watch.setText("開始保持觀看");
+                  watch.setOnClickListener(v -> {
+                      Intent captureIntent =
+                          projectionManager.createScreenCaptureIntent();
+                      startActivityForResult(captureIntent, CAPTURE_REQUEST);
+                  });
+
+                  Button accessibility = new Button(this);
+                  accessibility.setText("開啟操作權限");
+                  accessibility.setOnClickListener(v ->
+                      startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                  );
+
+                  Button stop = new Button(this);
+                  stop.setText("停止觀看");
+                  stop.setOnClickListener(v ->
+                      stopService(new Intent(this, WatchService.class))
+                  );
+
+                  root.addView(
+                      title,
+                      new LinearLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.WRAP_CONTENT
+                      )
+                  );
+
+                  root.addView(watch);
+                  root.addView(accessibility);
+                  root.addView(stop);
+
+                  setContentView(root);
+              }
+
+              @Override
+              protected void onActivityResult(
+                  int requestCode,
+                  int resultCode,
+                  Intent data
+              ) {
+                  super.onActivityResult(requestCode, resultCode, data);
+
+                  if (requestCode == CAPTURE_REQUEST &&
+                      resultCode == RESULT_OK &&
+                      data != null) {
+
+                      Intent service = new Intent(this, WatchService.class);
+                      service.putExtra("resultCode", resultCode);
+                      service.putExtra("data", data);
+
+                      startForegroundService(service);
+                  }
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/charlotte/agent/AgentAccessibilityService.java <<'EOF'
+          package com.charlotte.agent;
+
+          import android.accessibilityservice.AccessibilityService;
+          import android.accessibilityservice.GestureDescription;
+          import android.graphics.Path;
+          import android.view.accessibility.AccessibilityEvent;
+
+          public class AgentAccessibilityService extends AccessibilityService {
+
+              private String currentPackage = "";
+
+              @Override
+              public void onAccessibilityEvent(AccessibilityEvent event) {
+                  if (event != null && event.getPackageName() != null) {
+                      currentPackage = event.getPackageName().toString();
+                  }
+              }
+
+              @Override
+              public void onInterrupt() {
+              }
+
+              public boolean tap(float x, float y) {
+                  Path path = new Path();
+                  path.moveTo(x, y);
+
+                  GestureDescription.StrokeDescription stroke =
+                      new GestureDescription.StrokeDescription(
+                          path,
+                          0,
+                          50
+                      );
+
+                  GestureDescription gesture =
+                      new GestureDescription.Builder()
+                          .addStroke(stroke)
+                          .build();
+
+                  return dispatchGesture(gesture, null, null);
+              }
+
+              public String getCurrentPackage() {
+                  return currentPackage;
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/charlotte/agent/WatchService.java <<'EOF'
+          package com.charlotte.agent;
+
+          import android.app.Notification;
+          import android.app.NotificationChannel;
+          import android.app.NotificationManager;
+          import android.app.Service;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.graphics.PixelFormat;
+          import android.hardware.display.DisplayManager;
+          import android.hardware.display.VirtualDisplay;
+          import android.media.Image;
+          import android.media.ImageReader;
+          import android.media.projection.MediaProjection;
+          import android.media.projection.MediaProjectionManager;
+          import android.os.IBinder;
+          import android.util.DisplayMetrics;
+
+          public class WatchService extends Service {
+
+              private static final String CHANNEL = "charlotte_watch";
+              private static final int NOTIFICATION_ID = 901;
+
+              private MediaProjection projection;
+              private VirtualDisplay virtualDisplay;
+              private ImageReader imageReader;
+              private long frameCount = 0;
+
+              @Override
+              public void onCreate() {
+                  super.onCreate();
+
+                  NotificationChannel channel =
+                      new NotificationChannel(
+                          CHANNEL,
+                          "夏洛特保持觀看",
+                          NotificationManager.IMPORTANCE_LOW
+                      );
+
+                  NotificationManager nm =
+                      getSystemService(NotificationManager.class);
+
+                  nm.createNotificationChannel(channel);
+              }
+
+              @Override
+              public int onStartCommand(Intent intent, int flags, int startId) {
+
+                  Notification notification =
+                      new Notification.Builder(this, CHANNEL)
+                          .setContentTitle("夏洛特正在保持觀看")
+                          .setContentText("等待畫面變化")
+                          .setSmallIcon(android.R.drawable.presence_video_online)
+                          .build();
+
+                  startForeground(NOTIFICATION_ID, notification);
+
+                  int resultCode =
+                      intent.getIntExtra("resultCode", 0);
+
+                  Intent data =
+                      intent.getParcelableExtra("data");
+
+                  MediaProjectionManager manager =
+                      (MediaProjectionManager)
+                          getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+
+                  projection =
+                      manager.getMediaProjection(resultCode, data);
+
+                  DisplayMetrics metrics =
+                      getResources().getDisplayMetrics();
+
+                  int width = metrics.widthPixels;
+                  int height = metrics.heightPixels;
+                  int density = metrics.densityDpi;
+
+                  imageReader =
+                      ImageReader.newInstance(
+                          width,
+                          height,
+                          PixelFormat.RGBA_8888,
+                          2
+                      );
+
+                  imageReader.setOnImageAvailableListener(reader -> {
+                      Image image = null;
+
+                      try {
+                          image = reader.acquireLatestImage();
+
+                          if (image != null) {
+                              frameCount++;
+                          }
+                      } finally {
+                          if (image != null) {
+                              image.close();
+                          }
+                      }
+                  }, null);
+
+                  virtualDisplay =
+                      projection.createVirtualDisplay(
+                          "CharlotteWatch",
+                          width,
+                          height,
+                          density,
+                          DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                          imageReader.getSurface(),
+                          null,
+                          null
+                      );
+
+                  return START_STICKY;
+              }
+
+              @Override
+              public void onDestroy() {
+                  if (virtualDisplay != null) {
+                      virtualDisplay.release();
+                  }
+
+                  if (imageReader != null) {
+                      imageReader.close();
+                  }
+
+                  if (projection != null) {
+                      projection.stop();
+                  }
+
+                  super.onDestroy();
+              }
+
+              @Override
+              public IBinder onBind(Intent intent) {
+                  return null;
+              }
+          }
+          EOF
+
+      - name: Build APK
+        run: |
+          gradle --no-daemon :app:assembleDebug
+
+      - name: Validate APK
+        run: |
+          APK="app/build/outputs/apk/debug/app-debug.apk"
+
+          test -f "$APK"
+
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK"
+
+          sha256sum "$APK" | tee CharlotteAgent-SHA256.txt
+
+          cp "$APK" CharlotteAgent-v0.7.9-A-debug.apk
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CharlotteAgent-v0.7.9-A
+          path: |
+            CharlotteAgent-v0.7.9-A-debug.apk
+            CharlotteAgent-SHA256.txt
+          if-no-files-found: error
