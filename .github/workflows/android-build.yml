@@ -7,34 +7,72 @@ on:
       - ".github/workflows/android-build.yml"
 
 jobs:
-  build-and-runtime-test:
+  build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Restore project
+        run: |
+          echo "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" | base64 -d > project.tgz
+          tar xzf project.tgz
 
       - name: Install Android tools
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+      - name: Build APK
+        run: |
+          gradle --no-daemon :app:assembleDebug
 
-      - name: Create Charlotte Android project
+      - name: Android 36 launch test
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 36
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -e
+            APK="app/build/outputs/apk/debug/app-debug.apk"
+            adb install -r "$APK"
+            adb logcat -c
+            adb shell am force-stop com.charlotte.agent
+            adb shell am start -W -n com.charlotte.agent/.MainActivity | tee activity-start.txt
+            sleep 5
+            PID="$(adb shell pidof com.charlotte.agent | tr -d '\r')"
+            test -n "$PID"
+            adb shell dumpsys activity activities | tee activity-state.txt
+            adb logcat -d -v time | tee emulator-logcat.txt
+            ! grep -q "FATAL EXCEPTION" emulator-logcat.txt
+            grep -q "com.charlotte.agent/.MainActivity" activity-state.txt
+
+      - name: Prepare APK
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk CharlotteAgent-v0.7.9-B-debug.apk
+          sha256sum CharlotteAgent-v0.7.9-B-debug.apk | tee CharlotteAgent-SHA256.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: CharlotteAgent-v0.7.9-B
+          path: |
+            CharlotteAgent-v0.7.9-B-debug.apk
+            CharlotteAgent-SHA256.txt
+            activity-start.txt
+            activity-state.txt
+            emulator-logcat.txt      - name: Create Charlotte Android project
         run: |
           mkdir -p app/src/main/java/com/charlotte/agent
           mkdir -p app/src/main/res/xml
