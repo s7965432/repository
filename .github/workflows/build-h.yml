@@ -1,0 +1,72 @@
+name: Charlotte Companion v0.9.0-alpha2 APK
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/build-h.yml"
+      - "CharlotteCompanion-v0.9.0-alpha2-project.zip"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Stable signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: charlotte-companion-v090-debug-key-v1
+
+      - name: Unpack project
+        run: |
+          rm -rf charlotte-build
+          mkdir charlotte-build
+          unzip -q CharlotteCompanion-v0.9.0-alpha2-project.zip -d charlotte-build
+
+      - name: Install Android tools
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Preflight
+        working-directory: charlotte-build
+        run: bash ci-preflight.sh
+
+      - name: Build APK
+        working-directory: charlotte-build
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Validate APK
+        run: |
+          APK="charlotte-build/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee badging.txt
+          grep -q "package: name='com.charlotte.companion'" badging.txt
+          grep -q "versionName='0.9.0-alpha2'" badging.txt
+          cp "$APK" CharlotteCompanion-v0.9.0-alpha2-debug.apk
+          sha256sum CharlotteCompanion-v0.9.0-alpha2-debug.apk > CharlotteCompanion-SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: CharlotteCompanion-v0.9.0-alpha2
+          path: |
+            CharlotteCompanion-v0.9.0-alpha2-debug.apk
+            CharlotteCompanion-SHA256.txt
+            badging.txt
+          if-no-files-found: error
